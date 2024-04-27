@@ -1,0 +1,1 @@
+alias mrdm ./target/release/mrdm

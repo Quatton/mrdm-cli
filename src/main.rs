@@ -1,23 +1,86 @@
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{command, Args, Parser, Subcommand};
+use regex::Regex;
+use std::io::Write;
 
-// TODO: change it to `mrdm todo list`
-#[derive(Parser)]
+#[derive(Debug, Parser)] // requires `derive` feature
+#[command(name = "mrdm")]
+#[command(about = "A //TODO list utility for in-code project managemnt", long_about = None)]
 struct Cli {
-    /// The pattern to look for
-    pattern: String,
-    /// The path to the file to read
-    path: std::path::PathBuf,
+    #[command(subcommand)]
+    command: Commands,
 }
+
+#[derive(Debug, Subcommand)]
+enum Commands {
+    /// Manage TODOs in a file
+    Todo(TodoArgs),
+}
+
+#[derive(Debug, Args)]
+struct TodoArgs {
+    #[command(subcommand)]
+    command: TodoCommands,
+}
+
+#[derive(Debug, Subcommand)]
+enum TodoCommands {
+    /// List TODOs in a file
+    List {
+        /// A pattern to search for in the TODOs
+        /// default: "TODO"
+        #[arg(short)]
+        pattern: Option<String>,
+
+        /// The path to the file to search for TODOs
+        path: std::path::PathBuf,
+    },
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
+    let stdout = std::io::stdout();
+    let mut handle = std::io::BufWriter::new(stdout);
 
-    let content = std::fs::read_to_string(&args.path)
-        .with_context(|| format!("could not read file `{}`", args.path.display()))?;
-    for (i, line) in content.lines().enumerate() {
-        if line.contains(&args.pattern) {
-            println!("{}: {}", i, line.trim());
+    match args.command {
+        Commands::Todo(todo_args) => {
+            let todo_cmd = todo_args.command;
+
+            match todo_cmd {
+                TodoCommands::List {
+                    pattern: _pattern,
+                    path,
+                } => {
+                    let content = std::fs::read_to_string(&path)
+                        .with_context(|| format!("could not read file `{}`", &path.display()))?;
+
+                    let pattern = _pattern.unwrap_or("TODO".to_string());
+                    // start with ^
+                    // match anything not // until first // {pattern}:
+                    // match anything after until end of line
+                    let re =
+                        Regex::new(&format!(r"[^/]*(?<todo>//\s*{}:\s*(?<title>.*))", pattern))
+                            .unwrap();
+
+                    for (i, line) in content.lines().enumerate() {
+                        match re.captures(line) {
+                            Some(caps) => {
+                                let title = caps.name("title").unwrap().as_str();
+                                writeln!(
+                                    handle,
+                                    "({}:{}) {}",
+                                    path.display(),
+                                    i + 1,
+                                    title.trim()
+                                )?;
+                            }
+                            None => {}
+                        }
+                    }
+                }
+            }
         }
     }
+
     Ok(())
 }
