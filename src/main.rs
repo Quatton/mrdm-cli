@@ -4,7 +4,7 @@ use config::Config;
 
 use regex::Regex;
 use serde_derive::{Deserialize, Serialize};
-use std::io::Write;
+use std::io::{BufWriter, Write};
 #[derive(Debug, Parser)] // requires `derive` feature
 #[command(name = "mrdm")]
 #[command(about = "A //TODO list utility for in-code project management", long_about = None)]
@@ -42,6 +42,11 @@ enum TodoCommands {
 
         /// The path to the file to search for TODOs
         path: Option<std::path::PathBuf>,
+
+        /// Output file to write the TODOs to
+        /// If not provided, it will write to stdout
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
     },
 }
 
@@ -49,6 +54,7 @@ enum TodoCommands {
 struct CliConfig {
     patterns: Vec<String>,
     include: Vec<String>,
+    out: Option<std::path::PathBuf>,
 }
 
 impl ::std::default::Default for CliConfig {
@@ -56,6 +62,7 @@ impl ::std::default::Default for CliConfig {
         Self {
             patterns: vec!["TODO".to_string()],
             include: vec!["src/**/*".to_string()],
+            out: None,
         }
     }
 }
@@ -87,7 +94,7 @@ fn list_todo(
     path: &std::path::Path,
     re: &Regex,
     // any buffer that implements `std::io::Write`
-    outbuf: &mut std::io::BufWriter<dyn std::io::Write>,
+    outbuf: &mut std::io::BufWriter<Box<dyn std::io::Write>>,
 ) -> Result<()> {
     let content = std::fs::read_to_string(&path)
         .with_context(|| format!("could not read file `{}`", &path.display()))?;
@@ -100,11 +107,11 @@ fn list_todo(
                 let category = caps.name("category").unwrap().as_str();
                 writeln!(
                     outbuf,
-                    "({}:{}) {}: {}",
+                    "- [ ] {}: {} ({}:{})",
+                    category,
+                    title.trim(),
                     path.display(),
                     i + 1,
-                    category,
-                    title.trim()
                 )?;
             }
             None => {}
@@ -115,8 +122,6 @@ fn list_todo(
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
-    let stdout = std::io::stdout();
-    let mut outbuf = std::io::BufWriter::new(stdout);
     let cfg = get_config();
 
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
@@ -149,6 +154,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             match todo_cmd {
                 TodoCommands::List {
+                    out,
                     pattern: _pattern,
                     path,
                 } => {
@@ -174,6 +180,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .iter()
                             .map(|s| std::path::PathBuf::from(s))
                             .collect()
+                    };
+
+                    let out = if let Some(out) = out {
+                        Some(out)
+                    } else {
+                        cfg.out
+                    };
+
+                    let mut outbuf: BufWriter<Box<dyn Write>> = match out {
+                        Some(ref path) => {
+                            let file = std::fs::OpenOptions::new()
+                                .write(true)
+                                .create(true)
+                                .truncate(true)
+                                .open(
+                                    // open a .tmp file first
+                                    path.with_extension("tmp"),
+                                )
+                                .with_context(|| {
+                                    format!("could not open file `{}`", &path.display())
+                                })?;
+
+                            std::io::BufWriter::new(Box::new(file))
+                        }
+                        None => std::io::BufWriter::new(Box::new(std::io::stdout())),
                     };
 
                     for path in paths {

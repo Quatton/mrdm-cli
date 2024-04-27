@@ -1,0 +1,4 @@
+- [ ] TODO: `mrdm commit` collect TODOs into a change file and add an idempotency key so that you can move and rename (src/main.rs:21)
+- [ ] TODO: `mrdm commit` should help with committing with name and description (src/main.rs:23)
+- [ ] TODO: pattern should accept more tags like feat, fix, case-insensitive -> config file (src/main.rs:37)
+- [ ] TODO: multiline support (src/main.rs:102)
