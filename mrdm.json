@@ -1,0 +1,4 @@
+{
+  "patterns": ["TODO", "FIXME", "HACK", "XXX", "BUG", "OPTIMIZE"],
+  "include": ["src/**/*.rs"]
+}

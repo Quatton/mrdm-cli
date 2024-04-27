@@ -1,1 +1,1 @@
-alias mrdm ./target/release/mrdm
+alias mrdm ./target/debug/mrdm
