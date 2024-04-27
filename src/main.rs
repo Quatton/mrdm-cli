@@ -5,7 +5,7 @@ use std::io::Write;
 
 #[derive(Debug, Parser)] // requires `derive` feature
 #[command(name = "mrdm")]
-#[command(about = "A //TODO list utility for in-code project managemnt", long_about = None)]
+#[command(about = "A //TODO list utility for in-code project management", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
