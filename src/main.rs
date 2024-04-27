@@ -15,6 +15,11 @@ struct Cli {
 enum Commands {
     /// Manage TODOs in a file
     Todo(TodoArgs),
+    // TODO: `mrdm init` add a config file and path will detect project directory instead
+
+    // TODO: `mrdm commit` collect TODOs into a change file and add an idempotency key so that you can move and rename
+
+    // TODO: `mrdm commit` should help with committing with name and description
 }
 
 #[derive(Debug, Args)]
@@ -27,6 +32,7 @@ struct TodoArgs {
 enum TodoCommands {
     /// List TODOs in a file
     List {
+        // TODO: pattern should accept more tags like feat, fix, case-insensitive -> config file
         /// A pattern to search for in the TODOs
         /// default: "TODO"
         #[arg(short)]
@@ -62,6 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Regex::new(&format!(r"[^/]*(?<todo>//\s*{}:\s*(?<title>.*))", pattern))
                             .unwrap();
 
+                    // TODO: multiline support
                     for (i, line) in content.lines().enumerate() {
                         match re.captures(line) {
                             Some(caps) => {
