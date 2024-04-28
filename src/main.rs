@@ -78,6 +78,7 @@ struct TodoItem {
     category: String,
     path: std::path::PathBuf,
     line: usize,
+    done: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -178,6 +179,7 @@ fn list_todo(
                                 category: category.to_string(),
                                 path: path.to_path_buf(),
                                 line: i + 1,
+                                done: false,
                             },
                         );
                     }
