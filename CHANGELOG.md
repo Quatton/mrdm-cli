@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [unreleased]
+
+### 🚀 Features
+
+- Add done status in TodoItem
+- Sorted hashmap
+
+### ⚙️ Miscellaneous Tasks
+
+- Generated changelog
+
 ## [0.2.0] - 2024-04-28
 
 ### 🚀 Features

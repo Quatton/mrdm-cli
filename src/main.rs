@@ -6,7 +6,9 @@ use log::debug;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{
-    io::{BufWriter, Write},
+    collections::{HashMap, HashSet},
+    io::{BufReader, BufWriter, Write},
+    str::FromStr,
     sync::{Arc, Mutex},
     thread,
 };
@@ -22,8 +24,6 @@ struct Cli {
 enum Commands {
     /// Manage TODOs in a file
     Todo(TodoArgs),
-
-    // TODO(0): `mrdm commit` collect TODOs into a change file and add an idempotency key so that you can move and rename
 
     // TODO(1): `mrdm commit` should help with committing with name and description
     Init,
@@ -42,6 +42,19 @@ enum TodoCommands {
         // TODO(2): pattern should accept more tags like feat, fix, case-insensitive -> config file
         /// A comma separated pattern to search for in the TODOs
         /// example: "TODO,HACK,FIXME"
+        #[arg(short)]
+        pattern: Option<String>,
+
+        /// The path to the file to search for TODOs
+        path: Option<std::path::PathBuf>,
+
+        /// Output file to write the TODOs to
+        /// If not provided, it will write to stdout
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
+
+    Done {
         #[arg(short)]
         pattern: Option<String>,
 
@@ -110,10 +123,11 @@ fn get_config() -> CliConfig {
     CliConfig::default()
 }
 
-fn list_todo(
+fn get_todos_from_one_file(
     path: &std::path::Path,
     re: &Arc<Regex>,
     todo_items: &Arc<Mutex<TodoList>>,
+    current_length: Arc<Mutex<usize>>,
 ) -> Result<()> {
     let content = std::fs::read_to_string(&path)
         .with_context(|| format!("could not read file `{}`", &path.display()))?;
@@ -156,7 +170,8 @@ fn list_todo(
                                 id.as_str().to_string()
                             }
                             None => {
-                                let current_idx = todo_items.items.len();
+                                let current_idx = *current_length.lock().unwrap();
+                                *current_length.lock().unwrap() += 1;
                                 let id = format!("{}", current_idx);
 
                                 writeln!(
@@ -223,6 +238,113 @@ fn create_regex(patterns: Vec<&str>) -> Result<Regex> {
     })
 }
 
+fn get_todos(
+    pattern: Option<String>,
+    path: Option<std::path::PathBuf>,
+    cfg: &CliConfig,
+    current_length: Arc<Mutex<usize>>,
+) -> Result<HashMap<String, TodoItem>> {
+    let pattern = pattern.unwrap_or(
+        cfg.patterns
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+            .join(","),
+    );
+    let patterns = pattern.split(',').collect::<Vec<_>>();
+
+    let re = Arc::new(create_regex(patterns).unwrap());
+
+    let paths = if let Some(path) = path {
+        vec![path]
+    } else {
+        cfg.include
+            .iter()
+            .map(|s| std::path::PathBuf::from(s))
+            .collect()
+    };
+
+    let mut handles = vec![];
+
+    let todo_items = Arc::new(Mutex::new(TodoList {
+        items: std::collections::HashMap::new(),
+    }));
+
+    for path in paths {
+        for entry in glob::glob(&path.to_string_lossy())? {
+            match entry {
+                Ok(path) => {
+                    let todo_items = Arc::clone(&todo_items);
+                    let re = Arc::clone(&re);
+                    let current_length = Arc::clone(&current_length);
+                    debug!("processing file: {}", path.display());
+                    handles.push(thread::spawn(move || {
+                        get_todos_from_one_file(&path, &re, &todo_items, current_length)
+                    }));
+                }
+                Err(e) => eprintln!("error: {}", e),
+            }
+        }
+    }
+
+    for handle in handles {
+        handle.join().unwrap()?;
+    }
+
+    // sorted hashmap
+    let mut todo_maps = todo_items
+        .lock()
+        .unwrap()
+        .items
+        .clone()
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    todo_maps.sort_by_key(|(id, _)| id.clone());
+
+    Ok(HashMap::from_iter(todo_maps))
+}
+
+macro_rules! write_todo_items {
+    ($todo_items:expr, $outbuf:expr, $is_stdout:expr) => {
+        for (id, item) in $todo_items.into_iter() {
+            writeln!(
+                $outbuf,
+                "- [{}] {}({}): {} {}({}{}{})",
+                if item.done { "x" } else { " " },
+                item.category,
+                id,
+                item.title.trim(),
+                if $is_stdout { "" } else { "[link]" },
+                item.path.display(),
+                if $is_stdout { ":" } else { "#L" },
+                item.line,
+            )?;
+        }
+    };
+}
+
+fn get_outbuf(
+    out: Option<std::path::PathBuf>,
+    cfg: &CliConfig,
+) -> Result<(BufWriter<Box<dyn Write>>, bool)> {
+    let out = out.or_else(|| cfg.out.clone());
+
+    match out {
+        Some(ref path) => {
+            let file = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(path)
+                .with_context(|| format!("could not open file `{}`", &path.display()))?;
+
+            Ok((BufWriter::new(Box::new(file)), false))
+        }
+        None => Ok((BufWriter::new(Box::new(std::io::stdout())), true)),
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
     let cfg = get_config();
@@ -256,81 +378,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let todo_cmd = todo_args.command;
 
             match todo_cmd {
-                TodoCommands::List {
-                    out,
-                    pattern: _pattern,
-                    path,
-                } => {
-                    let pattern = _pattern.unwrap_or(
-                        cfg.patterns
-                            .iter()
-                            .map(|s| s.to_string())
-                            .collect::<Vec<_>>()
-                            .join(","),
-                    );
-                    let patterns = pattern.split(',').collect::<Vec<_>>();
+                TodoCommands::List { out, pattern, path } => {
+                    let data_in = std::fs::OpenOptions::new()
+                        .read(true)
+                        .open(std::path::PathBuf::from_str(OUT_PATH).unwrap())
+                        .with_context(|| format!("could not open file `{}`", &OUT_PATH))?;
+                    let rdr = BufReader::new(data_in);
 
-                    let re = Arc::new(create_regex(patterns).unwrap());
-
-                    let paths = if let Some(path) = path {
-                        vec![path]
-                    } else {
-                        cfg.include
-                            .iter()
-                            .map(|s| std::path::PathBuf::from(s))
-                            .collect()
-                    };
-
-                    let out = if let Some(out) = out {
-                        Some(out)
-                    } else {
-                        cfg.out
-                    };
-
-                    let mut outbuf: BufWriter<Box<dyn Write>> = match out {
-                        Some(ref path) => {
-                            let file = std::fs::OpenOptions::new()
-                                .write(true)
-                                .create(true)
-                                .truncate(true)
-                                .open(path)
-                                .with_context(|| {
-                                    format!("could not open file `{}`", &path.display())
-                                })?;
-
-                            std::io::BufWriter::new(Box::new(file))
-                        }
-                        None => std::io::BufWriter::new(Box::new(std::io::stdout())),
-                    };
-
-                    let is_stdout = out.is_none();
-
-                    let todo_items = Arc::new(Mutex::new(TodoList {
+                    let prev_todo = serde_json::from_reader(rdr).unwrap_or_else(|_| TodoList {
                         items: std::collections::HashMap::new(),
-                    }));
+                    });
 
-                    let mut handles = vec![];
+                    let current_length = Arc::new(Mutex::new(prev_todo.items.len()));
 
-                    for path in paths {
-                        for entry in glob::glob(&path.to_string_lossy())? {
-                            match entry {
-                                Ok(path) => {
-                                    let todo_items = Arc::clone(&todo_items);
-                                    let re = Arc::clone(&re);
-                                    debug!("processing file: {}", path.display());
-                                    handles.push(thread::spawn(move || {
-                                        list_todo(&path, &re, &todo_items)
-                                    }));
-                                }
-                                Err(e) => eprintln!("error: {}", e),
-                            }
-                        }
-                    }
+                    let todo_items = get_todos(pattern, path, &cfg, current_length)?;
 
-                    for handle in handles {
-                        handle.join().unwrap()?;
-                    }
-
+                    let (mut outbuf, is_stdout) = get_outbuf(out, &cfg)?;
+                    write_todo_items!(todo_items, outbuf, is_stdout);
+                }
+                TodoCommands::Done { pattern, path, out } => {
                     // if .mrdm directory does not exist, create it
                     std::fs::create_dir(".mrdm").ok();
 
@@ -338,43 +404,88 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let data_out = std::fs::OpenOptions::new()
                         .write(true)
                         .create(true)
-                        .truncate(true)
-                        .open(OUT_PATH)
+                        .open(
+                            std::path::PathBuf::from_str(OUT_PATH)
+                                .unwrap()
+                                .with_extension("tmp"),
+                        )
                         .with_context(|| format!("could not open file `{}`", &OUT_PATH))?;
 
-                    let mut data_writer = BufWriter::new(data_out);
+                    let data_in = std::fs::OpenOptions::new()
+                        .read(true)
+                        .open(std::path::PathBuf::from_str(OUT_PATH).unwrap())
+                        .with_context(|| format!("could not open file `{}`", &OUT_PATH))?;
 
-                    match todo_items.lock() {
-                        Ok(todo_items) => {
-                            // sorted hashmap
-                            let mut todo_maps =
-                                todo_items.items.clone().into_iter().collect::<Vec<_>>();
+                    let data_writer = BufWriter::new(data_out);
 
-                            todo_maps.sort_by_key(|(id, _)| id.clone());
+                    let rdr = BufReader::new(data_in);
 
-                            serde_json::to_writer_pretty(&mut data_writer, &*todo_items)
-                                .with_context(|| {
-                                    format!("could not write to file `{}`", &OUT_PATH)
-                                })?;
+                    let prev_todo = serde_json::from_reader(rdr).unwrap_or_else(|_| TodoList {
+                        items: std::collections::HashMap::new(),
+                    });
 
-                            for (id, item) in todo_maps.into_iter() {
-                                writeln!(
-                                    outbuf,
-                                    "- [ ] {}({}): {} {}({}{}{})",
-                                    item.category,
-                                    id,
-                                    item.title.trim(),
-                                    if is_stdout { "" } else { "[link]" },
-                                    item.path.display(),
-                                    if is_stdout { ":" } else { "#L" },
-                                    item.line,
-                                )?;
-                            }
+                    let current_length = Arc::new(Mutex::new(prev_todo.items.len()));
+                    let curr_todo = get_todos(pattern, path, &cfg, current_length)?;
+
+                    let (mut outbuf, is_stdout) = get_outbuf(out, &cfg)?;
+
+                    let prev_keys: HashSet<String> = prev_todo.items.keys().cloned().collect();
+                    let prev_done_keys: HashSet<String> = prev_todo
+                        .items
+                        .iter()
+                        .filter(|(_, item)| item.done)
+                        .map(|(id, _)| id.clone())
+                        .collect();
+                    let curr_keys: HashSet<String> = curr_todo.keys().cloned().collect();
+
+                    let deleted_keys = prev_keys.difference(&curr_keys);
+                    let undone_keys = prev_done_keys.intersection(&curr_keys);
+
+                    let mut final_todo = prev_todo
+                        .items
+                        .into_iter()
+                        .chain(curr_todo.into_iter())
+                        .collect::<HashMap<_, _>>();
+
+                    // set status of done items to true
+                    for key in deleted_keys {
+                        if let Some(item) = final_todo.get_mut(key.as_str()) {
+                            item.done = true;
                         }
-                        Err(e) => {
-                            return Err(anyhow::anyhow!("could not lock todo_items: {}", e).into());
+                    }
+
+                    // items that were done but are now undone
+                    for key in undone_keys {
+                        if let Some(item) = final_todo.get_mut(key.as_str()) {
+                            item.done = false;
                         }
-                    };
+                    }
+
+                    let mut final_todo = final_todo.into_iter().collect::<Vec<_>>();
+
+                    final_todo.sort_by_key(|(id, _)| id.clone());
+
+                    write_todo_items!(&final_todo, outbuf, is_stdout);
+
+                    // write to file
+                    serde_json::to_writer_pretty(
+                        data_writer,
+                        &TodoList {
+                            items: final_todo.into_iter().collect::<HashMap<_, _>>(),
+                        },
+                    )
+                    .with_context(|| format!("could not write to file `{}`", &OUT_PATH))?;
+
+                    // overwrite the original file with the rewritten content
+                    std::fs::rename(
+                        std::path::PathBuf::from_str(OUT_PATH)
+                            .unwrap()
+                            .with_extension("tmp"),
+                        std::path::PathBuf::from_str(OUT_PATH).unwrap(),
+                    )
+                    .with_context(|| {
+                        format!("could not rename file `{}` to `{}`", &OUT_PATH, &OUT_PATH)
+                    })?;
                 }
             }
         }
