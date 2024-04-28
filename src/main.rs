@@ -67,6 +67,13 @@ impl ::std::default::Default for CliConfig {
     }
 }
 
+struct TodoItem {
+    title: String,
+    category: String,
+    path: std::path::PathBuf,
+    line: usize,
+}
+
 const CONFIG_PATH: &str = "mrdm.json";
 
 fn get_config() -> CliConfig {
@@ -93,8 +100,7 @@ fn get_config() -> CliConfig {
 fn list_todo(
     path: &std::path::Path,
     re: &Regex,
-    // any buffer that implements `std::io::Write`
-    outbuf: &mut std::io::BufWriter<Box<dyn std::io::Write>>,
+    todo_items: &mut std::collections::HashMap<String, TodoItem>,
 ) -> Result<()> {
     let content = std::fs::read_to_string(&path)
         .with_context(|| format!("could not read file `{}`", &path.display()))?;
@@ -105,14 +111,24 @@ fn list_todo(
             Some(caps) => {
                 let title = caps.name("title").unwrap().as_str();
                 let category = caps.name("category").unwrap().as_str();
-                writeln!(
-                    outbuf,
-                    "- [ ] {}: {} ({}:{})",
-                    category,
-                    title.trim(),
-                    path.display(),
-                    i + 1,
-                )?;
+                // writeln!(
+                //     outbuf,
+                //     "- [ ] {}: {} ({}:{})",
+                //     category,
+                //     title.trim(),
+                //     path.display(),
+                //     i + 1,
+                // )?;
+                let current_idx = todo_items.len();
+                todo_items.insert(
+                    format!("!{}", current_idx),
+                    TodoItem {
+                        title: title.to_string(),
+                        category: category.to_string(),
+                        path: path.to_path_buf(),
+                        line: i + 1,
+                    },
+                );
             }
             None => {}
         }
@@ -207,15 +223,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         None => std::io::BufWriter::new(Box::new(std::io::stdout())),
                     };
 
+                    let mut todo_items: std::collections::HashMap<String, TodoItem> =
+                        std::collections::HashMap::new();
+
                     for path in paths {
                         for entry in glob::glob(&path.to_string_lossy())? {
                             match entry {
                                 Ok(path) => {
-                                    list_todo(&path, &re, &mut outbuf)?;
+                                    list_todo(&path, &re, &mut todo_items)?;
                                 }
                                 Err(e) => eprintln!("error: {}", e),
                             }
                         }
+                    }
+
+                    for (_, item) in todo_items.iter() {
+                        writeln!(
+                            outbuf,
+                            "- [ ] {}: {} ({}:{})",
+                            item.category,
+                            item.title.trim(),
+                            item.path.display(),
+                            item.line,
+                        )?;
                     }
                 }
             }
