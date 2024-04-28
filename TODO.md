@@ -2,4 +2,5 @@
 - [ ] TODO(1): `mrdm commit` should help with committing with name and description [link](src/main.rs#L28)
 - [ ] TODO(2): pattern should accept more tags like feat, fix, case-insensitive -> config file [link](src/main.rs#L42)
 - [ ] TODO(3): multiline support [link](src/main.rs#L144)
-- [ ] TODO(5): escape even number of other quotation marks [link](src/main.rs#L229)
+- [ ] FIXME(4): just added this to fix the integrity of the hashmap [link](src/main.rs#L293)
+- [x] TODO(5): escape even number of other quotation marks [link](src/main.rs#L229)

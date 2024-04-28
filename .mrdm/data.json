@@ -1,5 +1,19 @@
 {
   "items": {
+    "0": {
+      "title": "`mrdm commit` collect TODOs into a change file and add an idempotency key so that you can move and rename",
+      "category": "TODO",
+      "path": "src/main.rs",
+      "line": 28,
+      "done": true
+    },
+    "4": {
+      "title": "just added this to fix the integrity of the hashmap",
+      "category": "FIXME",
+      "path": "src/main.rs",
+      "line": 293,
+      "done": false
+    },
     "2": {
       "title": "pattern should accept more tags like feat, fix, case-insensitive -> config file",
       "category": "TODO",
@@ -26,13 +40,6 @@
       "category": "TODO",
       "path": "src/main.rs",
       "line": 229,
-      "done": false
-    },
-    "0": {
-      "title": "`mrdm commit` collect TODOs into a change file and add an idempotency key so that you can move and rename",
-      "category": "TODO",
-      "path": "src/main.rs",
-      "line": 28,
       "done": true
     }
   }

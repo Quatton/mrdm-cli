@@ -226,7 +226,6 @@ fn get_todos_from_one_file(
 
 fn create_regex(patterns: Vec<&str>) -> Result<Regex> {
     Regex::new(&format!(
-        // TODO(5): escape even number of other quotation marks
         r#"^(?<before>[^"]*("[^"]*"[^"]*)*)//\s*(?<category>{})(\((?<id>\d+)\))?:\s*(?<title>.*)"#,
         patterns.join("|")
     ))
@@ -242,7 +241,7 @@ fn get_todos(
     pattern: Option<String>,
     path: Option<std::path::PathBuf>,
     cfg: &CliConfig,
-    current_length: Arc<Mutex<usize>>,
+    current_length: &Arc<Mutex<usize>>,
 ) -> Result<HashMap<String, TodoItem>> {
     let pattern = pattern.unwrap_or(
         cfg.patterns
@@ -291,6 +290,7 @@ fn get_todos(
         handle.join().unwrap()?;
     }
 
+    // FIXME(4): just added this to fix the integrity of the hashmap
     // sorted hashmap
     let mut todo_maps = todo_items
         .lock()
@@ -391,7 +391,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     let current_length = Arc::new(Mutex::new(prev_todo.items.len()));
 
-                    let todo_items = get_todos(pattern, path, &cfg, current_length)?;
+                    let todo_items = get_todos(pattern, path, &cfg, &current_length)?;
 
                     let (mut outbuf, is_stdout) = get_outbuf(out, &cfg)?;
                     write_todo_items!(todo_items, outbuf, is_stdout);
@@ -424,21 +424,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         items: std::collections::HashMap::new(),
                     });
 
-                    let current_length = Arc::new(Mutex::new(prev_todo.items.len()));
-                    let curr_todo = get_todos(pattern, path, &cfg, current_length)?;
+                    let prev_iter = prev_todo.items.clone().into_iter();
+
+                    let current_length = Arc::new(Mutex::new(
+                        // it's not the length but rather max id
+                        prev_iter
+                            .map(|(id, _)| id.parse::<usize>().unwrap_or(0))
+                            .max()
+                            .unwrap_or(0),
+                    ));
+                    let curr_todo = get_todos(pattern, path, &cfg, &current_length)?;
 
                     let (mut outbuf, is_stdout) = get_outbuf(out, &cfg)?;
 
-                    let prev_keys: HashSet<String> = prev_todo.items.keys().cloned().collect();
                     let prev_done_keys: HashSet<String> = prev_todo
                         .items
                         .iter()
                         .filter(|(_, item)| item.done)
                         .map(|(id, _)| id.clone())
                         .collect();
+
+                    let prev_not_done_keys: HashSet<String> = prev_todo
+                        .items
+                        .iter()
+                        .filter(|(_, item)| !item.done)
+                        .map(|(id, _)| id.clone())
+                        .collect();
+
                     let curr_keys: HashSet<String> = curr_todo.keys().cloned().collect();
 
-                    let deleted_keys = prev_keys.difference(&curr_keys);
+                    let deleted_keys = prev_not_done_keys.difference(&curr_keys);
                     let undone_keys = prev_done_keys.intersection(&curr_keys);
 
                     let mut final_todo = prev_todo
@@ -447,17 +462,73 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .chain(curr_todo.into_iter())
                         .collect::<HashMap<_, _>>();
 
+                    let stdout = std::io::stdout();
+
+                    let mut handle = stdout.lock();
+
                     // set status of done items to true
                     for key in deleted_keys {
                         if let Some(item) = final_todo.get_mut(key.as_str()) {
-                            item.done = true;
+                            // prompt user to confirm deletion
+                            let prompt = format!(
+                                "This todo item was removed from your codebase:\n\
+                                - [ ] {}: {} {}({}{}{})\n\
+                                Do you want to mark it as done or remove it from the list? (d/r)",
+                                item.category,
+                                item.title.trim(),
+                                if is_stdout { "" } else { "[link]" },
+                                item.path.display(),
+                                if is_stdout { ":" } else { "#L" },
+                                item.line,
+                            );
+
+                            writeln!(handle, "{}", prompt)?;
+
+                            handle.flush()?;
+
+                            let mut input = String::new();
+                            std::io::stdin().read_line(&mut input)?;
+
+                            if input.trim().to_lowercase() == "d" {
+                                item.done = true;
+                            } else {
+                                final_todo.remove(key.as_str());
+                            }
                         }
                     }
 
                     // items that were done but are now undone
                     for key in undone_keys {
+                        let length = final_todo.len();
                         if let Some(item) = final_todo.get_mut(key.as_str()) {
-                            item.done = false;
+                            // prompt user to confirm deletion
+                            let prompt = format!(
+                                "This todo item was marked as done but is now undone:\n\
+                                - [x] {}: {} {}({}{}{})\n\
+                                Do you want to mark it as undone or recreate it? (u/r)",
+                                item.category,
+                                item.title.trim(),
+                                if is_stdout { "" } else { "[link]" },
+                                item.path.display(),
+                                if is_stdout { ":" } else { "#L" },
+                                item.line,
+                            );
+
+                            writeln!(handle, "{}", prompt)?;
+
+                            handle.flush()?;
+
+                            let mut input = String::new();
+                            std::io::stdin().read_line(&mut input)?;
+
+                            if input.trim().to_lowercase() == "u" {
+                                item.done = false;
+                            } else {
+                                let id = format!("{}", length);
+                                let cloned_item = item.clone();
+
+                                final_todo.insert(id.clone(), cloned_item);
+                            }
                         }
                     }
 
