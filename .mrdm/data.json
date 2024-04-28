@@ -1,34 +1,39 @@
 {
   "items": {
+    "0": {
+      "title": "`mrdm commit` collect TODOs into a change file and add an idempotency key so that you can move and rename",
+      "category": "TODO",
+      "path": "src/main.rs",
+      "line": 26,
+      "done": false
+    },
     "2": {
       "title": "pattern should accept more tags like feat, fix, case-insensitive -> config file",
       "category": "TODO",
       "path": "src/main.rs",
-      "line": 42
+      "line": 42,
+      "done": false
     },
     "3": {
       "title": "multiline support",
       "category": "TODO",
       "path": "src/main.rs",
-      "line": 129
-    },
-    "5": {
-      "title": "escape even number of other quotation marks",
-      "category": "TODO",
-      "path": "src/main.rs",
-      "line": 212
+      "line": 130,
+      "done": false
     },
     "1": {
       "title": "`mrdm commit` should help with committing with name and description",
       "category": "TODO",
       "path": "src/main.rs",
-      "line": 28
+      "line": 28,
+      "done": false
     },
-    "0": {
-      "title": "`mrdm commit` collect TODOs into a change file and add an idempotency key so that you can move and rename",
+    "5": {
+      "title": "escape even number of other quotation marks",
       "category": "TODO",
       "path": "src/main.rs",
-      "line": 26
+      "line": 214,
+      "done": false
     }
   }
 }

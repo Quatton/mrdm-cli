@@ -72,7 +72,7 @@ impl ::std::default::Default for CliConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 struct TodoItem {
     title: String,
     category: String,
@@ -81,7 +81,7 @@ struct TodoItem {
     done: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct TodoList {
     items: std::collections::HashMap<String, TodoItem>,
 }
@@ -331,20 +331,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         handle.join().unwrap()?;
                     }
 
-                    for (id, item) in todo_items.lock().unwrap().items.iter() {
-                        writeln!(
-                            outbuf,
-                            "- [ ] {}({}): {} {}({}{}{})",
-                            item.category,
-                            id,
-                            item.title.trim(),
-                            if is_stdout { "" } else { "[link]" },
-                            item.path.display(),
-                            if is_stdout { ":" } else { "#L" },
-                            item.line,
-                        )?;
-                    }
-
                     // if .mrdm directory does not exist, create it
                     std::fs::create_dir(".mrdm").ok();
 
@@ -360,10 +346,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     match todo_items.lock() {
                         Ok(todo_items) => {
+                            // sorted hashmap
+                            let mut todo_maps =
+                                todo_items.items.clone().into_iter().collect::<Vec<_>>();
+
+                            todo_maps.sort_by_key(|(id, _)| id.clone());
+
                             serde_json::to_writer_pretty(&mut data_writer, &*todo_items)
                                 .with_context(|| {
                                     format!("could not write to file `{}`", &OUT_PATH)
                                 })?;
+
+                            for (id, item) in todo_maps.into_iter() {
+                                writeln!(
+                                    outbuf,
+                                    "- [ ] {}({}): {} {}({}{}{})",
+                                    item.category,
+                                    id,
+                                    item.title.trim(),
+                                    if is_stdout { "" } else { "[link]" },
+                                    item.path.display(),
+                                    if is_stdout { ":" } else { "#L" },
+                                    item.line,
+                                )?;
+                            }
                         }
                         Err(e) => {
                             return Err(anyhow::anyhow!("could not lock todo_items: {}", e).into());
