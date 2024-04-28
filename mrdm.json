@@ -1,4 +1,5 @@
 {
   "patterns": ["TODO", "FIXME", "HACK", "XXX", "BUG", "OPTIMIZE"],
-  "include": ["src/**/*.rs"]
+  "include": ["src/**/*.rs"],
+  "out": "TODO.md"
 }
